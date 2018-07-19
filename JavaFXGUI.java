@@ -10,12 +10,13 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
 
 import java.util.List;
+
 /**
  *
- * @author Yavuz
+ * @author Yavuz Secer, TINF100837
  */
 public class JavaFXGUI implements GUIConnector {
-    
+
     /**
      * Displays the actual Level
      */
@@ -63,34 +64,34 @@ public class JavaFXGUI implements GUIConnector {
         this.questLbl = questLbl;
         this.boardGPane = board;
     }
-    
+
     /**
      * Shows the actual Level Number
-     * @param lvlNo 
+     * @param lvlNo
      */
     public void showLevelNo(int lvlNo) {
         this.lvlLbl.setText(String.valueOf(lvlNo));
     }
-    
+
     /**
      * Shows the actual Score
-     * @param score 
+     * @param score
      */
     public void showScore(int score) {
         this.scoreLbl.setText(String.valueOf(score));
     }
-    
+
     /**
      * Shows the actual remaining moves
-     * @param moves 
+     * @param moves
      */
     public void showMoves(int moves) {
         this.movesLbl.setText(String.valueOf(moves));
     }
-    
+
     /**
      * Shows the Quest as a String
-     * @param quest 
+     * @param quest
      */
     public void showQuest(String quest) {
         this.questLbl.setText(quest);
@@ -137,7 +138,7 @@ public class JavaFXGUI implements GUIConnector {
      */
     private void removeImageViewsFromCells(int col, int row, int toDelete) {
         for (int i = 0; i < toDelete; i++) {
-            ImageView iv = (ImageView) JavaFXGUI.getNodeFromGridPane(boardGPane, col, row - i);
+            ImageView iv = (ImageView) gui.JavaFXGUI.getNodeFromGridPane(boardGPane, col, row - i);
             boardGPane.getChildren().remove(iv);
         }
     }
@@ -169,21 +170,51 @@ public class JavaFXGUI implements GUIConnector {
         addImageViewToPane(boardGPane, iv, col, row);
     }
 
-    private TranslateTransition horizontalTransition(int factor1, ImageView iv) {
-        TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
-        tt.fromXProperty().set(factor1);
-        tt.toXProperty().set(0);
-        return tt;
+    public void updateGui(AnimationData aData) {
+        final int rowHeight = (int) (boardGPane.getHeight() / boardGPane.getRowConstraints().size());
+        Coords switchSourceCoords = aData.getSwitchSourceCoords();
+        Coords switchTargetCoords = aData.getSwitchTargetCoords();
+
+        // Apply player move
+        ParallelTransition switchAnimation = switchStones(switchSourceCoords, switchTargetCoords);
+        switchAnimation.play();
+        // Revert switch, if the move was invalid
+        if (aData.geteData().isEmpty()) {
+            switchAnimation.setOnFinished(event -> {
+                ParallelTransition switchBackAnimation = switchStones(switchSourceCoords, switchTargetCoords);
+                switchBackAnimation.play();
+            });
+        } else {
+            switchAnimation.setOnFinished(event -> {
+                // Animate explosions for every found Structure
+                for (ExplosionData eData : aData.geteData()) {
+                    SequentialTransition explosionAnimation = new SequentialTransition();
+                    // Coordinates of where the bonusStone appears
+                    Coords bonusSource = eData.getBonusSourceCoords();
+                    // Coordinates of where the bonusStone need to be repositioned
+                    Coords bonusTarget = eData.getBonusTargetCoords();
+
+                    // Remove all Structure elements and make Stones above drop to their target
+                    // positions. Also translate them back to the same position for the animation
+                    removeStructureAndReplaceIvs(eData, bonusTarget, bonusSource, rowHeight);
+                    // This shall only proceed if the animation involves handeling a bonusStone
+                    if (bonusSource != null && bonusTarget != null) {
+                        int rowsToMove = bonusTarget.getRow() - bonusSource.getRow();
+                        ImageView bonusIv = (ImageView) gui.JavaFXGUI.getNodeFromGridPane(boardGPane, bonusTarget.getCol(), bonusTarget.getRow());
+                        // BonusStone shall fade in at the source Position
+                        explosionAnimation = bonusStoneFadeIn(explosionAnimation, rowsToMove, bonusIv, rowHeight);
+                        // Translate to targetPosition, if sourcePosition is not equal to targetPosition
+                        explosionAnimation = bonusStoneMoveToTargetCoords(explosionAnimation, rowsToMove, bonusIv, rowHeight);
+                    }
+                    // Make the Stone ImageViews translate from their origin position to their new target positions
+                    explosionAnimation = dropAndFillUpEmptySpace(explosionAnimation, eData, bonusTarget, bonusSource, rowHeight);
+                    explosionAnimation.play();
+                }
+            });
+        }
     }
 
-    private TranslateTransition verticalTransition(int factor1, ImageView iv) {
-        TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
-        tt.fromYProperty().set(factor1);
-        tt.toYProperty().set(0);
-        return tt;
-    }
-
-    private ParallelTransition switchStones(Coords source, Coords target, AnimationData aData) {
+    private ParallelTransition switchStones(Coords source, Coords target) {
 
         final int rowHeight = (int) (boardGPane.getHeight() / boardGPane.getRowConstraints().size());
         final int colWidth = (int) (boardGPane.getWidth() / boardGPane.getColumnConstraints().size());
@@ -193,8 +224,8 @@ public class JavaFXGUI implements GUIConnector {
         int tCol = target.getCol();
         int tRow = target.getRow();
 
-        ImageView sourceIv = (ImageView) JavaFXGUI.getNodeFromGridPane(boardGPane, sCol, sRow);
-        ImageView targetIv = (ImageView) JavaFXGUI.getNodeFromGridPane(boardGPane, tCol, tRow);
+        ImageView sourceIv = (ImageView) gui.JavaFXGUI.getNodeFromGridPane(boardGPane, sCol, sRow);
+        ImageView targetIv = (ImageView) gui.JavaFXGUI.getNodeFromGridPane(boardGPane, tCol, tRow);
 
         removeImageViewsFromCells(tCol, tRow, 1);
         removeImageViewsFromCells(sCol, sRow, 1);
@@ -222,146 +253,126 @@ public class JavaFXGUI implements GUIConnector {
             pt.getChildren().add(horizontalTransition(-colWidth, sourceIv));
             pt.getChildren().add(horizontalTransition(colWidth, targetIv));
         }
+        return pt;
+    }
 
-        if (!aData.geteData().isEmpty()) {
-            pt.setOnFinished(event -> {
-                ExplosionData explosionData = aData.geteData().get(0);
-                for (DataPerColumn dropInfo : explosionData.getExplosionInfo()) {
-                    for (int i = 0; i < dropInfo.getHeightOffset(); i++) {
-                        removeImageViewsFromCells(dropInfo.getCoords().getCol(), dropInfo.getCoords().getRow() - i, 1);
-                    }
+    private void removeStructureAndReplaceIvs(ExplosionData eData,
+                                              Coords bonusTargetCoords,
+                                              Coords bonusSourceCoords,
+                                              final int rowHeight) {
+        // Removing the Structure and all stones above by deleting the ImageViews col by col
+        for (DropInfo info : eData.getExplosionInfo()) {
+            // Coordinates of the Structure element that is going to be removed in this col
+            int col = info.getCoords().getCol();
+            int row = info.getCoords().getRow();
+            // If a bonusStone will apear, the heightOffset gets reduced by one
+            int offset = getAppropiateOffset(bonusTargetCoords, info, col);
+
+            // Remove the Structure and all ImageViews above
+            removeImageViewsFromCells(col, row, row + 1);
+
+            List<String> stoneToken = info.getFallingStoneToken();
+            for (int r = row, i = 0; r >= 0; --r, ++i) {
+                // Fill up removed Cells with new ImageViews values
+                ImageView newIv = new ImageView(new Image(preImagePath + stoneToken.get(i) + ".png"));
+                // Place each iv to their target Coords
+                addImageViewToPane(newIv, col, r);
+                // Translate all non-bonusStones to the position they were placed before
+                if (ignoreBonusTargetCoordinates(bonusTargetCoords, bonusSourceCoords, r, col)) {
+                    newIv.setTranslateY(-rowHeight * offset);
                 }
-            });
-        }
-        return pt;
-    }
-
-    public void updateGui(AnimationData aData) {
-        final int rowHeight = (int) (boardGPane.getHeight() / boardGPane.getRowConstraints().size());
-        // Apply player move
-        ParallelTransition switchAnimation = animateSwitch(aData);
-        // If move was not valid, move back
-        switchAnimation.setOnFinished(event -> {
-            if (aData.geteData().isEmpty()) {
-                Coords source = aData.getSwitchSourceCoords();
-                Coords target = aData.getSwitchTargetCoords();
-                ParallelTransition switchBackAnimation = switchStones(source, target, aData);
-                switchBackAnimation.play();
-            }
-
-            SequentialTransition explosionAnimation = new SequentialTransition();
-            for (ExplosionData eData : aData.geteData()) {
-                ParallelTransition structureRemoveAnimation = removeStructure(eData);
-                structureRemoveAnimation.setOnFinished(event1 -> {
-                    SequentialTransition bonusAppearanceAnimation = animateBonusAppearance(eData, rowHeight);
-                    bonusAppearanceAnimation.setOnFinished(event2 -> {
-                        ParallelTransition stoneDropAnimation = animateDrop(eData, rowHeight);
-                        stoneDropAnimation.setOnFinished(event3 -> explosionAnimation.getChildren().add(structureRemoveAnimation));
-                        stoneDropAnimation.play();
-                    });
-                    bonusAppearanceAnimation.play();
-                });
-                structureRemoveAnimation.play();
-            }
-            explosionAnimation.play();
-        });
-        switchAnimation.play();
-    }
-
-    private ParallelTransition removeStructure(ExplosionData eData) {
-        ParallelTransition pt = new ParallelTransition();
-        // Pause before the structure is about to be removed
-        PauseTransition pause = new PauseTransition(Duration.millis(300));
-        pause.setOnFinished(event -> {
-            // Remove the structure ImageViews
-            for (DataPerColumn info : eData.getExplosionInfo()) {
-                removeImageViewsFromCells(info.getCoords().getCol(), info.getCoords().getRow(), info.getHeightOffset());
-            }
-        });
-        pt.getChildren().add(pause);
-        return pt;
-    }
-
-    private ParallelTransition animateSwitch(AnimationData aData) {
-        Coords source = aData.getSwitchSourceCoords();
-        Coords target = aData.getSwitchTargetCoords();
-        return switchStones(source, target, aData);
-    }
-
-    private SequentialTransition animateBonusAppearance(ExplosionData eData, final int rowHeight) {
-        Coords source = eData.getBonusSourceCoords();
-        Coords target = eData.getBonusTargetCoords();
-        SequentialTransition sq = new SequentialTransition();
-
-        if (eData.getBonusSourceCoords() != null && eData.getBonusTargetCoords() != null) {
-            int offset = target.getRow() - source.getRow();
-            String bonusToken = eData.getBonusToken();
-            ImageView iv = new ImageView(new Image(preImagePath + bonusToken + ".png"));
-            addImageViewToPane(iv, target.getCol(), target.getRow());
-            iv.setTranslateY(-rowHeight * offset);
-
-            FadeTransition ft = new FadeTransition(Duration.millis(1000), iv);
-            ft.setFromValue(0);
-            ft.setToValue(1.0);
-            sq.getChildren().add(ft);
-            if (offset > 0) {
-                iv.setTranslateY(-(rowHeight * offset));
-                TranslateTransition tt = new TranslateTransition(Duration.millis(1000), iv);
-                tt.fromYProperty().set(-(rowHeight * offset));
-                tt.toYProperty().set(0);
-                sq.getChildren().add(tt);
             }
         }
-        return sq;
     }
 
-    private ParallelTransition animateDrop(ExplosionData eData, final int rowHeight) {
-        ParallelTransition allMovements = new ParallelTransition();
+    // If the removed Structure results to generate a bonusStone, make it fade in at source position
+    private SequentialTransition bonusStoneFadeIn(SequentialTransition explosionAnimation,
+                                                  int sourceToTargetDiff,
+                                                  ImageView bonusIv,
+                                                  final int rowHeight) {
+        FadeTransition bonusFadeIn = new FadeTransition(Duration.seconds(1), bonusIv);
+        bonusFadeIn.setFromValue(0f);
+        bonusFadeIn.setToValue(1f);
+        // If the target Position is not the same, place it to target and translate to source position
+        if (sourceToTargetDiff > 0) {
+            bonusIv.setTranslateY(-rowHeight * sourceToTargetDiff);
+        }
+
+        explosionAnimation.getChildren().add(bonusFadeIn);
+        return explosionAnimation;
+    }
+
+    // If the bonusStone must be moved from source Coordinates to target Coordinates
+    private SequentialTransition bonusStoneMoveToTargetCoords(SequentialTransition explosionAnimation,
+                                                              int sourceToTargetDiff,
+                                                              ImageView bonusIv,
+                                                              final int rowHeight) {
+        // Difference in row from bonusSourceCoordinates to bonusTargetCoordinates
+        if (sourceToTargetDiff > 0) {
+            TranslateTransition moveToTargetCoords = new TranslateTransition(Duration.seconds(1), bonusIv);
+            moveToTargetCoords.fromYProperty().set(-rowHeight * sourceToTargetDiff);
+            moveToTargetCoords.toYProperty().set(0);
+            explosionAnimation.getChildren().add(moveToTargetCoords);
+        }
+        return explosionAnimation;
+    }
+
+    private SequentialTransition dropAndFillUpEmptySpace(SequentialTransition explosionAnimation,
+                                                         ExplosionData eData,
+                                                         Coords bonusTargetCoords,
+                                                         Coords bonusSourceCoords,
+                                                         final int rowHeight) {
+        ParallelTransition animateDrop = new ParallelTransition();
         for (int i = 0; i < eData.getExplosionInfo().size(); i++) {
-            DataPerColumn dropInfo = eData.getExplosionInfo().get(i);
-            int col = dropInfo.getCoords().getCol();
-            int row = dropInfo.getCoords().getRow();
-            int heightOffset = dropInfo.getHeightOffset();
-            int bonusOffset = (eData.getBonusTargetCoords() != null && eData.getBonusTargetCoords().getCol() == col) ? 1 : 0;
-            int newRow = row - bonusOffset;
+            // List of all stoneToken to create respective ImageViews for each col
+            List<DropInfo> allDropInfo = eData.getExplosionInfo();
+            int col = allDropInfo.get(i).getCoords().getCol();
+            int row = allDropInfo.get(i).getCoords().getRow();
+            // If a bonusStone will apear, the heightOffset gets reduced by one
+            int offset = getAppropiateOffset(bonusTargetCoords, allDropInfo.get(i), col);
 
-            List<String> allValues = eData.getExplosionInfo().get(i).getFallingStoneToken();
-            //System.out.println("[" + row + "/" + col + "] :\n" + allValues.toString());
-            removeImageViewsFromCells(col, newRow, newRow + 1);
+            for (int r = row; r >= 0; --r) {
+                // Drop all Stones above the removed Structure to fill up the empty space
+                // Ignore possible bonusStones since they are being animated seperately
+                if (ignoreBonusTargetCoordinates(bonusTargetCoords, bonusSourceCoords, r, col)) {
+                    ImageView iv = (ImageView) gui.JavaFXGUI.getNodeFromGridPane(boardGPane, col, r);
+                    TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
+                    tt.fromYProperty().set(-rowHeight * offset);
+                    tt.toYProperty().set(0);
+                    animateDrop.getChildren().add(tt);
+                }
+            }
 
-            ImageView[] newIvs = createNewIvsAndSetThemToTheirTargetCells(col, newRow, heightOffset - bonusOffset, allValues, rowHeight);
-            allMovements = addCreatedTransitions(newIvs, heightOffset - bonusOffset, rowHeight, allMovements);
         }
-        return allMovements;
+        explosionAnimation.getChildren().add(animateDrop);
+        return explosionAnimation;
     }
 
-    private ImageView[] createNewIvsAndSetThemToTheirTargetCells(int col, int row, int heightOffset, List<String> newValues, final int rowHeight) {
-        ImageView[] newIvs = new ImageView[newValues.size()];
-        for (int i = 0; i < newValues.size(); i++) {
-            Image img = new Image(preImagePath + newValues.get(i) + ".png");
-            newIvs[i] = new ImageView(img);
-            addImageViewToPane(newIvs[i], col, row - i);
-            newIvs[i].setTranslateY(-rowHeight * heightOffset);
-        }
-        return newIvs;
+    private int getAppropiateOffset(Coords bonusTargetCoords, DropInfo dropInfo, int col) {
+        int bonusOffset = (bonusTargetCoords != null && col == bonusTargetCoords.getCol()) ? 1 : 0;
+        return dropInfo.getHeightOffset() - bonusOffset;
     }
 
-    private ParallelTransition addCreatedTransitions(ImageView[] ivs,
-                                                     int rowsToMove,
-                                                     final int rowHeight,
-                                                     ParallelTransition allMovements) {
-        for (ImageView iv : ivs) { //drop each given image
-            //the x-Position has to be set for the translation
-            //the translation may start above the visible column, it ends at the targetcell
-
-            TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
-            tt.fromYProperty().set(-(rowHeight * rowsToMove));
-            tt.toYProperty().set(0);
-
-            //add the tt-Movement to the parallel-transistion of all movements
-            allMovements.getChildren().add(tt);
-        }
-        return allMovements;
+    private boolean ignoreBonusTargetCoordinates(Coords bonusTargetCoords,
+                                                 Coords bonusSourceCoords,
+                                                 int row,
+                                                 int col) {
+        return bonusSourceCoords == null
+                || bonusTargetCoords != null && col != bonusTargetCoords.getCol()
+                || bonusTargetCoords != null && row != bonusTargetCoords.getRow();
     }
 
+    private TranslateTransition horizontalTransition(int factor1, ImageView iv) {
+        TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
+        tt.fromXProperty().set(factor1);
+        tt.toXProperty().set(0);
+        return tt;
+    }
+
+    private TranslateTransition verticalTransition(int factor1, ImageView iv) {
+        TranslateTransition tt = new TranslateTransition(Duration.millis(1500), iv);
+        tt.fromYProperty().set(factor1);
+        tt.toYProperty().set(0);
+        return tt;
+    }
 }
